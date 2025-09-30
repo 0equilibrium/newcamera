@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../main.dart' as main_file;
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({Key? key}) : super(key: key);
@@ -38,12 +39,52 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _initializeCamera() async {
-    // 카메라 권한 요청
-    final status = await Permission.camera.request();
-    if (status != PermissionStatus.granted) {
+    // 카메라 권한 확인
+    var status = await Permission.camera.status;
+
+    // 권한이 없으면 요청
+    if (!status.isGranted) {
+      status = await Permission.camera.request();
+    }
+
+    // 권한이 거부되었을 경우 처리
+    if (status.isDenied) {
       setState(() {
         _isPermissionGranted = false;
       });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('카메라 권한이 필요합니다. 권한을 허용해주세요.'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 권한이 영구적으로 거부되었을 경우
+    if (status.isPermanentlyDenied) {
+      setState(() {
+        _isPermissionGranted = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('설정에서 카메라 권한을 허용해주세요.'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: '설정 열기',
+              textColor: Colors.white,
+              onPressed: () {
+                openAppSettings();
+              },
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
 
@@ -52,10 +93,19 @@ class _CameraScreenState extends State<CameraScreen> {
     });
 
     try {
-      // 사용 가능한 카메라 목록 가져오기
-      _cameras = await availableCameras();
+      // main에서 초기화한 카메라 목록 사용
+      _cameras = main_file.cameras;
+
       if (_cameras.isEmpty) {
         print('사용 가능한 카메라가 없습니다.');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('사용 가능한 카메라가 없습니다.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
         return;
       }
 
@@ -70,15 +120,29 @@ class _CameraScreenState extends State<CameraScreen> {
         camera,
         ResolutionPreset.high,
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
 
       await _cameraController!.initialize();
 
-      setState(() {
-        _isCameraInitialized = true;
-      });
+      // 플래시 모드 초기 설정
+      await _cameraController!.setFlashMode(FlashMode.off);
+
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = true;
+        });
+      }
     } catch (e) {
       print('카메라 초기화 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('카메라 초기화 오류: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -154,9 +218,15 @@ class _CameraScreenState extends State<CameraScreen> {
         newCamera,
         ResolutionPreset.high,
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
 
       await _cameraController!.initialize();
+
+      // 플래시 모드 복원
+      await _cameraController!.setFlashMode(
+        _isFlashOn ? FlashMode.torch : FlashMode.off,
+      );
 
       setState(() {
         _isFrontCamera = !_isFrontCamera;
@@ -182,10 +252,19 @@ class _CameraScreenState extends State<CameraScreen> {
     });
   }
 
-  void _toggleFlash() {
-    setState(() {
-      _isFlashOn = !_isFlashOn;
-    });
+  Future<void> _toggleFlash() async {
+    if (_cameraController == null || !_isCameraInitialized) return;
+
+    try {
+      final newFlashMode = _isFlashOn ? FlashMode.off : FlashMode.torch;
+      await _cameraController!.setFlashMode(newFlashMode);
+
+      setState(() {
+        _isFlashOn = !_isFlashOn;
+      });
+    } catch (e) {
+      print('플래시 토글 오류: $e');
+    }
   }
 
   void _toggleDualMode() {
@@ -201,13 +280,17 @@ class _CameraScreenState extends State<CameraScreen> {
     if (!_isPermissionGranted) {
       return Container(
         color: Colors.black,
-        child: const Center(
+        child: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.camera_alt_outlined, size: 80, color: Colors.white54),
-              SizedBox(height: 20),
-              Text(
+              const Icon(
+                Icons.camera_alt_outlined,
+                size: 80,
+                color: Colors.white54,
+              ),
+              const SizedBox(height: 20),
+              const Text(
                 '카메라 권한이 필요합니다',
                 style: TextStyle(
                   color: Colors.white,
@@ -215,10 +298,30 @@ class _CameraScreenState extends State<CameraScreen> {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              SizedBox(height: 10),
-              Text(
+              const SizedBox(height: 10),
+              const Text(
                 '설정에서 카메라 권한을 허용해주세요',
                 style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () async {
+                  final status = await Permission.camera.status;
+                  if (status.isPermanentlyDenied) {
+                    openAppSettings();
+                  } else {
+                    _initializeCamera();
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 12,
+                  ),
+                ),
+                child: const Text('권한 설정하기'),
               ),
             ],
           ),

@@ -1,8 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:camera/camera.dart';
 import 'screens/camera_screen.dart';
 
-void main() {
+// 전역 카메라 리스트
+List<CameraDescription> cameras = [];
+
+Future<void> main() async {
+  // Flutter 바인딩 초기화
+  WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    // 사용 가능한 카메라 목록 가져오기
+    cameras = await availableCameras();
+  } catch (e) {
+    print('카메라 초기화 오류: $e');
+  }
+
   runApp(const SilentCameraApp());
 }
 
